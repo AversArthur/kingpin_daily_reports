@@ -1,0 +1,30 @@
+name: Meta Ads Daily Report
+
+on:
+  schedule:
+    # 8am UTC (winter / GMT). Change to '0 7 * * *' during BST (late Mar – late Oct)
+    - cron: '0 8 * * *'
+  workflow_dispatch: # allows manual trigger from GitHub UI
+
+jobs:
+  send-report:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install requests python-dotenv
+
+      - name: Run Meta Ads Reporter
+        env:
+          META_ACCESS_TOKEN: ${{ secrets.META_ACCESS_TOKEN }}
+          META_AD_ACCOUNT_ID: ${{ secrets.META_AD_ACCOUNT_ID }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: python meta_ads_slack_reporter.py
