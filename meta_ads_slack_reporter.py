@@ -1,11 +1,14 @@
 """
 Meta Ads → Slack Daily Reporter
 ================================
-Pulls yesterday's Meta Ads data per campaign:
-  Performance: Spend, CPM, CPC, CTR, ROAS
-  Conversions: Carts, Checkouts, Orders, Order Value
+Pulls yesterday's Meta Ads data per campaign and posts to Slack via webhook.
+Runs automatically via GitHub Actions at 08:00 UK time.
 
-Schedule at 08:00 UK time (UTC in winter, BST=UTC+1 in summer).
+Metrics: Spend, CPM, CPC, CTR, ROAS, Carts, Checkouts, Orders, Order Value
+
+Fixes:
+    - Deduplicates omni_purchase vs purchase (no double counting)
+    - Filters out campaigns with less than $1 spend
 
 Requirements:
     pip install requests python-dotenv
@@ -13,7 +16,7 @@ Requirements:
 .env variables:
     META_ACCESS_TOKEN   — Long-lived Meta access token (ads_read scope)
     META_AD_ACCOUNT_ID  — e.g. act_785368271166897
-    SLACK_WEBHOOK_URL   — Incoming webhook for your Slack channel
+    SLACK_WEBHOOK_URL   — Incoming webhook URL for your Slack channel
 """
 
 import os
@@ -33,26 +36,47 @@ SLACK_WEBHOOK_URL  = os.getenv("SLACK_WEBHOOK_URL")
 META_API_VERSION   = "v19.0"
 META_API_BASE      = f"https://graph.facebook.com/{META_API_VERSION}"
 
+MIN_SPEND = 1.0  # Filter out campaigns with less than $1 spend
+
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
 def get_yesterday():
     return (date.today() - timedelta(days=1)).strftime("%Y-%m-%d")
 
 def parse_roas(row):
-    for item in row.get("purchase_roas", []):
-        if item.get("action_type") in ("omni_purchase", "purchase"):
-            return float(item["value"])
+    """Pick omni_purchase ROAS first, fall back to purchase."""
+    roas_raw = row.get("purchase_roas", [])
+    omni = next((float(i["value"]) for i in roas_raw if i.get("action_type") == "omni_purchase"), None)
+    if omni is not None:
+        return omni
+    return next((float(i["value"]) for i in roas_raw if i.get("action_type") == "purchase"), None)
+
+def parse_action(items, action_type):
+    """
+    Deduplicate omni_ vs standard action types.
+    Prefer omni_ version if available, never sum both.
+    """
+    if not items:
+        return 0
+    lookup = {i.get("action_type"): float(i.get("value", 0)) for i in items}
+    omni_key = f"omni_{action_type}"
+    if omni_key in lookup:
+        return int(round(lookup[omni_key]))
+    if action_type in lookup:
+        return int(round(lookup[action_type]))
+    return 0
+
+def parse_action_value(items, action_type):
+    """Same deduplication for action_values."""
+    if not items:
+        return None
+    lookup = {i.get("action_type"): float(i.get("value", 0)) for i in items}
+    omni_key = f"omni_{action_type}"
+    if omni_key in lookup:
+        return round(lookup[omni_key], 2)
+    if action_type in lookup:
+        return round(lookup[action_type], 2)
     return None
-
-def parse_action(actions, *types):
-    """Sum action counts for given action_types."""
-    total = sum(float(i.get("value", 0)) for i in (actions or []) if i.get("action_type") in types)
-    return int(round(total))
-
-def parse_action_value(action_values, *types):
-    """Sum action values for given action_types."""
-    vals = [float(i.get("value", 0)) for i in (action_values or []) if i.get("action_type") in types]
-    return round(sum(vals), 2) if vals else None
 
 # ── Fetch ──────────────────────────────────────────────────────────────────────
 
@@ -60,10 +84,10 @@ def fetch_meta_insights(date_str: str):
     url = f"{META_API_BASE}/{META_AD_ACCOUNT_ID}/insights"
     params = {
         "access_token": META_ACCESS_TOKEN,
-        "fields": "campaign_name,spend,cpm,cpc,ctr,purchase_roas,actions,action_values",
+        "fields": "campaign_name,spend,impressions,inline_link_clicks,cpm,cpc,ctr,purchase_roas,actions,action_values",
         "time_range": json.dumps({"since": date_str, "until": date_str}),
         "level": "campaign",
-        "limit": 20,
+        "limit": 50,
     }
     resp = requests.get(url, params=params, timeout=30)
     resp.raise_for_status()
@@ -74,30 +98,45 @@ def fetch_meta_insights(date_str: str):
 
     campaigns = []
     for row in data["data"]:
-        spend        = float(row.get("spend", 0))
-        actions      = row.get("actions", [])
-        action_vals  = row.get("action_values", [])
+        spend       = float(row.get("spend", 0))
+
+        # Skip campaigns with less than $1 spend
+        if spend < MIN_SPEND:
+            continue
+
+        actions     = row.get("actions", [])
+        action_vals = row.get("action_values", [])
+
         campaigns.append({
             "name":        row.get("campaign_name", "Unknown Campaign"),
             "spend":       spend,
             "cpm":         float(row.get("cpm", 0)),
             "cpc":         float(row.get("cpc", 0)),
             "ctr":         float(row.get("ctr", 0)),
+            "impressions": int(row.get("impressions", 0)),
+            "clicks":      int(row.get("inline_link_clicks", 0)),
             "roas":        parse_roas(row),
-            "carts":       parse_action(actions,     "add_to_cart",        "omni_add_to_cart"),
-            "checkouts":   parse_action(actions,     "initiate_checkout",  "omni_initiated_checkout"),
-            "orders":      parse_action(actions,     "purchase",           "omni_purchase"),
-            "order_value": parse_action_value(action_vals, "purchase",     "omni_purchase"),
+            "carts":       parse_action(actions,     "add_to_cart"),
+            "checkouts":   parse_action(actions,     "initiate_checkout"),
+            "orders":      parse_action(actions,     "purchase"),
+            "order_value": parse_action_value(action_vals, "purchase"),
         })
+
+    if not campaigns:
+        return None, None
 
     campaigns.sort(key=lambda x: x["spend"], reverse=True)
 
-    # Weighted averages for rate metrics
-    total_spend = sum(c["spend"] for c in campaigns)
+    total_spend       = sum(c["spend"]       for c in campaigns)
+    total_impressions = sum(c["impressions"] for c in campaigns)
+    total_clicks      = sum(c["clicks"]      for c in campaigns)
+
     def wavg(key):
         return sum(c[key] * c["spend"] for c in campaigns) / total_spend if total_spend else 0
 
-    # Weighted ROAS across campaigns that have it
+    # CTR = clicks / impressions * 100 (correct, not spend-weighted)
+    total_ctr = (total_clicks / total_impressions * 100) if total_impressions else 0
+
     rc = [c for c in campaigns if c["roas"] is not None]
     roas_total = None
     if rc:
@@ -110,7 +149,7 @@ def fetch_meta_insights(date_str: str):
         "spend":       total_spend,
         "cpm":         wavg("cpm"),
         "cpc":         wavg("cpc"),
-        "ctr":         wavg("ctr"),
+        "ctr":         total_ctr,
         "roas":        roas_total,
         "carts":       sum(c["carts"]     for c in campaigns),
         "checkouts":   sum(c["checkouts"] for c in campaigns),
@@ -128,30 +167,8 @@ def roas_emoji(roas):
     if roas >= 1.5:    return "🟡"
     return "🔴"
 
-def fmt_roas(v):   return f"{v:.2f}x"   if v is not None else "N/A"
-def fmt_ov(v):     return f"${v:,.2f}"  if v is not None else "N/A"
-
-def campaign_block(i, c):
-    roas_str = fmt_roas(c["roas"])
-    ov_str   = fmt_ov(c["order_value"])
-    return {
-        "type": "section",
-        "text": {
-            "type": "mrkdwn",
-            "text": (
-                f"*{i}. {c['name']}*\n"
-                f"> 💸 Spend: `${c['spend']:,.2f}`  ·  "
-                f"📦 CPM: `${c['cpm']:,.2f}`  ·  "
-                f"🖱 CPC: `${c['cpc']:,.2f}`  ·  "
-                f"👆 CTR: `{c['ctr']:.2f}%`  ·  "
-                f"💰 ROAS: `{roas_str}`\n"
-                f"> 🛒 Carts: `{c['carts']}`  ·  "
-                f"🏁 Checkouts: `{c['checkouts']}`  ·  "
-                f"📦 Orders: `{c['orders']}`  ·  "
-                f"💵 Order Value: `{ov_str}`"
-            )
-        }
-    }
+def fmt_roas(v): return f"{v:.2f}x"  if v is not None else "N/A"
+def fmt_ov(v):   return f"${v:,.2f}" if v is not None else "N/A"
 
 def format_slack_message(campaigns, totals, report_date):
     if campaigns is None:
@@ -169,14 +186,32 @@ def format_slack_message(campaigns, totals, report_date):
         },
         {
             "type": "context",
-            "elements": [{"type": "mrkdwn", "text": f"📅  *{report_date}*"}]
+            "elements": [{"type": "mrkdwn",
+                "text": f"📅  *{report_date}*  ·  _Campaigns with $1+ spend only_"}]
         },
         {"type": "divider"},
-        {"type": "section", "text": {"type": "mrkdwn", "text": "*📣 Liquid Collagen Stix - Campaign Breakdown*"}},
+        {"type": "section", "text": {"type": "mrkdwn", "text": "*📣 Campaign Breakdown*"}},
     ]
 
     for i, c in enumerate(campaigns, 1):
-        blocks.append(campaign_block(i, c))
+        blocks.append({
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": (
+                    f"*{i}. {c['name']}*\n"
+                    f"> 💸 Spend: `${c['spend']:,.2f}`  ·  "
+                    f"📦 CPM: `${c['cpm']:,.2f}`  ·  "
+                    f"🖱 CPC: `${c['cpc']:,.2f}`  ·  "
+                    f"👆 CTR: `{c['ctr']:.2f}%`  ·  "
+                    f"💰 ROAS: `{fmt_roas(c['roas'])}`\n"
+                    f"> 🛒 Carts: `{c['carts']}`  ·  "
+                    f"🏁 Checkouts: `{c['checkouts']}`  ·  "
+                    f"📦 Orders: `{c['orders']}`  ·  "
+                    f"💵 Order Value: `{fmt_ov(c['order_value'])}`"
+                )
+            }
+        })
 
     roas_str = fmt_roas(totals["roas"])
     ov_str   = fmt_ov(totals["order_value"])
@@ -208,11 +243,15 @@ def format_slack_message(campaigns, totals, report_date):
 
     return {"text": f"Meta Ads Daily Report — {report_date}", "blocks": blocks}
 
-# ── Post ───────────────────────────────────────────────────────────────────────
+# ── Post to Slack ──────────────────────────────────────────────────────────────
 
 def post_to_slack(payload):
-    resp = requests.post(SLACK_WEBHOOK_URL, json=payload,
-                         headers={"Content-Type": "application/json"}, timeout=15)
+    resp = requests.post(
+        SLACK_WEBHOOK_URL,
+        json=payload,
+        headers={"Content-Type": "application/json"},
+        timeout=15
+    )
     resp.raise_for_status()
     print(f"✅ Posted to Slack (status {resp.status_code})")
 
