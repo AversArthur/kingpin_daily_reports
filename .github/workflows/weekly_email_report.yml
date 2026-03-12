@@ -1,13 +1,14 @@
-name: Meta Ads Daily Report
+name: Meta Ads Weekly Email Report
 
 on:
   schedule:
-    # 8am UTC (winter / GMT). Change to '0 7 * * *' during BST (late Mar – late Oct)
-    - cron: '0 8 * * *'
-  workflow_dispatch: # allows manual trigger from GitHub UI
+    # Every Friday at 08:00 UTC (= 08:00 UK in winter/GMT).
+    # During BST (late Mar – late Oct), UK is UTC+1 — change to '0 7 * * 5'.
+    - cron: '0 8 * * 5'
+  workflow_dispatch: # manual trigger from GitHub UI
 
 jobs:
-  send-report:
+  send-email:
     runs-on: ubuntu-latest
 
     steps:
@@ -22,9 +23,10 @@ jobs:
       - name: Install dependencies
         run: pip install requests python-dotenv
 
-      - name: Run Meta Ads Reporter
+      - name: Send weekly email report
         env:
           META_ACCESS_TOKEN: ${{ secrets.META_ACCESS_TOKEN }}
           META_AD_ACCOUNT_ID: ${{ secrets.META_AD_ACCOUNT_ID }}
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-        run: python meta_ads_slack_reporter.py
+          GMAIL_USER: ${{ secrets.GMAIL_USER }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+        run: python email_reporter.py
