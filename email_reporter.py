@@ -203,21 +203,15 @@ def section_html(campaigns, totals, label, period_type):
     """
 
 
-def build_html_email(daily_campaigns, daily_totals, daily_label,
-                     report_date,
-                     weekly_campaigns=None, weekly_totals=None,
-                     weekly_label=None):
-    daily_sec = section_html(daily_campaigns, daily_totals, daily_label, "daily")
-
-    weekly_block = ""
-    if weekly_campaigns is not None:
-        weekly_sec = section_html(
-            weekly_campaigns, weekly_totals, weekly_label, "weekly"
-        )
-        weekly_block = (
-            '<hr style="border:none;border-top:1px solid #eee;margin:32px 0">'
-            + weekly_sec
-        )
+def build_html_email(report_date, sections):
+    """
+    Build a full HTML email from a list of (campaigns, totals, label, period_type).
+    Sections are rendered in order, separated by a divider.
+    """
+    parts = []
+    for campaigns, totals, label, period_type in sections:
+        parts.append(section_html(campaigns, totals, label, period_type))
+    body = '<hr style="border:none;border-top:1px solid #eee;margin:32px 0">'.join(parts)
 
     return f"""<!DOCTYPE html>
 <html>
@@ -245,8 +239,7 @@ def build_html_email(daily_campaigns, daily_totals, daily_label,
         </tr>
         <tr>
           <td style="padding:32px">
-            {daily_sec}
-            {weekly_block}
+            {body}
           </td>
         </tr>
         <tr>
@@ -313,16 +306,16 @@ def main():
     (daily_date, daily_label,
      weekly_since, weekly_until, weekly_label) = get_date_ranges()
 
-    print(f"Fetching daily data: {daily_label}...")
-    daily_campaigns, daily_totals = fetch_meta_insights(
-        daily_date, daily_date, META_ACCESS_TOKEN, META_AD_ACCOUNT_ID
-    )
-
     report_date = date.today().strftime("%d %b %Y")
 
     if daily_mode:
+        print(f"Fetching daily data: {daily_label}...")
+        daily_campaigns, daily_totals = fetch_meta_insights(
+            daily_date, daily_date, META_ACCESS_TOKEN, META_AD_ACCOUNT_ID
+        )
         html = build_html_email(
-            daily_campaigns, daily_totals, daily_label, report_date
+            report_date,
+            [(daily_campaigns, daily_totals, daily_label, "daily")],
         )
     else:
         print(f"Fetching weekly data: {weekly_label}...")
@@ -330,8 +323,8 @@ def main():
             weekly_since, weekly_until, META_ACCESS_TOKEN, META_AD_ACCOUNT_ID
         )
         html = build_html_email(
-            daily_campaigns, daily_totals, daily_label, report_date,
-            weekly_campaigns, weekly_totals, weekly_label,
+            report_date,
+            [(weekly_campaigns, weekly_totals, weekly_label, "weekly")],
         )
 
     print("Sending email...")
