@@ -1,13 +1,15 @@
 """
-Meta Ads → Email Weekly Reporter
-==================================
-Sends a weekly email every Friday at 08:00 UK time containing:
-  1. Yesterday's daily data (Thursday)
-  2. Full week: last Friday → yesterday (Thu), weekends included
+Meta Ads → Email Reporter
+==========================
+Modes:
+    python email_reporter.py           # weekly: daily + full-week, all recipients
+    python email_reporter.py --daily   # daily only, all recipients
+    python email_reporter.py --test    # weekly, test recipient only
+    python email_reporter.py --daily --test  # daily, test recipient only
 
-Usage:
-    python email_reporter.py          # sends to all recipients
-    python email_reporter.py --test   # sends only to GMAIL_USER (for preview)
+Schedules (GitHub Actions):
+    Daily  — every day 08:00 UK time
+    Weekly — every Friday 08:00 UK time
 
 .env variables:
     META_ACCESS_TOKEN   — Long-lived Meta access token
@@ -202,10 +204,20 @@ def section_html(campaigns, totals, label, period_type):
 
 
 def build_html_email(daily_campaigns, daily_totals, daily_label,
-                     weekly_campaigns, weekly_totals, weekly_label,
-                     report_date):
-    daily_sec  = section_html(daily_campaigns,  daily_totals,  daily_label,  "daily")
-    weekly_sec = section_html(weekly_campaigns, weekly_totals, weekly_label, "weekly")
+                     report_date,
+                     weekly_campaigns=None, weekly_totals=None,
+                     weekly_label=None):
+    daily_sec = section_html(daily_campaigns, daily_totals, daily_label, "daily")
+
+    weekly_block = ""
+    if weekly_campaigns is not None:
+        weekly_sec = section_html(
+            weekly_campaigns, weekly_totals, weekly_label, "weekly"
+        )
+        weekly_block = (
+            '<hr style="border:none;border-top:1px solid #eee;margin:32px 0">'
+            + weekly_sec
+        )
 
     return f"""<!DOCTYPE html>
 <html>
@@ -234,15 +246,14 @@ def build_html_email(daily_campaigns, daily_totals, daily_label,
         <tr>
           <td style="padding:32px">
             {daily_sec}
-            <hr style="border:none;border-top:1px solid #eee;margin:32px 0">
-            {weekly_sec}
+            {weekly_block}
           </td>
         </tr>
         <tr>
           <td style="background:#f8f8f8;padding:16px 32px;border-top:1px solid #eee">
             <p style="margin:0;font-size:12px;color:#aaa">
-              Meta Ads API &nbsp;&middot;&nbsp; Sent every Friday 08:00 UK time
-              &nbsp;&middot;&nbsp; Data: Fri&ndash;Thu (week) &amp; Thu (daily)
+              Meta Ads API &nbsp;&middot;&nbsp; 08:00 UK time
+              &nbsp;&middot;&nbsp; Liquid Collagen Stix
             </p>
           </td>
         </tr>
@@ -255,20 +266,24 @@ def build_html_email(daily_campaigns, daily_totals, daily_label,
 
 # ── Send email ──────────────────────────────────────────────────────────────────
 
-# Fixed subject and thread anchor so every weekly report lands in the same
-# Gmail thread. Other clients (Outlook, Apple Mail) use In-Reply-To/References.
-THREAD_SUBJECT = "Meta Ads Weekly Report \u2014 Liquid Collagen Stix"
-THREAD_ANCHOR_ID = "<meta-ads-weekly-report@liquid-collagen-stix>"
+# Fixed subjects and thread anchors — daily and weekly each stay in own thread.
+DAILY_SUBJECT = "Meta Ads Daily Report \u2014 Liquid Collagen Stix"
+DAILY_THREAD_ID = "<meta-ads-daily-report@liquid-collagen-stix>"
+
+WEEKLY_SUBJECT = "Meta Ads Weekly Report \u2014 Liquid Collagen Stix"
+WEEKLY_THREAD_ID = "<meta-ads-weekly-report@liquid-collagen-stix>"
 
 
-def send_email(html_body, recipients):
+def send_email(html_body, recipients, daily_mode=False):
+    subject = DAILY_SUBJECT if daily_mode else WEEKLY_SUBJECT
+    thread_id = DAILY_THREAD_ID if daily_mode else WEEKLY_THREAD_ID
+
     msg = MIMEMultipart("alternative")
-    msg["Subject"] = THREAD_SUBJECT
+    msg["Subject"] = subject
     msg["From"] = f"Meta Ads Reporter <{GMAIL_USER}>"
     msg["To"] = ", ".join(recipients)
-    # Threading headers: all replies reference the same anchor Message-ID
-    msg["In-Reply-To"] = THREAD_ANCHOR_ID
-    msg["References"] = THREAD_ANCHOR_ID
+    msg["In-Reply-To"] = thread_id
+    msg["References"] = thread_id
     msg.attach(MIMEText(html_body, "html"))
 
     with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
@@ -287,11 +302,13 @@ def main():
             "GMAIL_USER, GMAIL_APP_PASSWORD"
         )
 
+    daily_mode = "--daily" in sys.argv
     test_mode  = "--test" in sys.argv
     recipients = [TEST_RECIPIENT] if test_mode else RECIPIENTS
 
     if test_mode:
         print(f"TEST MODE — sending only to {TEST_RECIPIENT}")
+    print(f"Mode: {'daily' if daily_mode else 'weekly'}")
 
     (daily_date, daily_label,
      weekly_since, weekly_until, weekly_label) = get_date_ranges()
@@ -301,21 +318,24 @@ def main():
         daily_date, daily_date, META_ACCESS_TOKEN, META_AD_ACCOUNT_ID
     )
 
-    print(f"Fetching weekly data: {weekly_label}...")
-    weekly_campaigns, weekly_totals = fetch_meta_insights(
-        weekly_since, weekly_until, META_ACCESS_TOKEN, META_AD_ACCOUNT_ID
-    )
-
     report_date = date.today().strftime("%d %b %Y")
 
-    html = build_html_email(
-        daily_campaigns, daily_totals, daily_label,
-        weekly_campaigns, weekly_totals, weekly_label,
-        report_date,
-    )
+    if daily_mode:
+        html = build_html_email(
+            daily_campaigns, daily_totals, daily_label, report_date
+        )
+    else:
+        print(f"Fetching weekly data: {weekly_label}...")
+        weekly_campaigns, weekly_totals = fetch_meta_insights(
+            weekly_since, weekly_until, META_ACCESS_TOKEN, META_AD_ACCOUNT_ID
+        )
+        html = build_html_email(
+            daily_campaigns, daily_totals, daily_label, report_date,
+            weekly_campaigns, weekly_totals, weekly_label,
+        )
 
     print("Sending email...")
-    send_email(html, recipients)
+    send_email(html, recipients, daily_mode=daily_mode)
     print("Done!")
 
 
