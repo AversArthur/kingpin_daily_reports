@@ -185,7 +185,7 @@ def section_html(campaigns, totals, label, period_type):
         {icon} {heading}
       </h2>
       <p style="margin:0 0 20px;color:#666;font-size:13px">
-        {label} &nbsp;&middot;&nbsp; Campaigns with $1+ spend only
+        {label}
       </p>
       <table width="100%" cellpadding="0" cellspacing="0"
         style="background:#f8f8f8;border-radius:8px;margin-bottom:24px">
