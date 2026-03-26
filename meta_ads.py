@@ -132,17 +132,16 @@ def fetch_meta_insights(since, until, access_token, ad_account_id):
     total_ctr = (total_clicks / total_impressions * 100) \
         if total_impressions else 0.0
 
-    rc = [c for c in campaigns if c["roas"] is not None]
-    roas_total = None
-    if rc:
-        rs = sum(c["spend"] for c in rc)
-        roas_total = (
-            sum(c["roas"] * c["spend"] for c in rc) / rs if rs else None
-        )
-
     ov_vals = [
         c["order_value"] for c in campaigns if c["order_value"] is not None
     ]
+
+    total_order_value = round(sum(ov_vals), 2) if ov_vals else None
+    roas_total = (
+        total_order_value / total_spend
+        if total_order_value and total_spend
+        else None
+    )
 
     totals = {
         "spend": total_spend,
@@ -156,7 +155,7 @@ def fetch_meta_insights(since, until, access_token, ad_account_id):
         "carts": sum(c["carts"] for c in campaigns),
         "checkouts": sum(c["checkouts"] for c in campaigns),
         "orders": sum(c["orders"] for c in campaigns),
-        "order_value": round(sum(ov_vals), 2) if ov_vals else None,
+        "order_value": total_order_value,
     }
 
     return campaigns, totals
