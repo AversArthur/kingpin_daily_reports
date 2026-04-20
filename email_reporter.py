@@ -13,8 +13,10 @@ Schedules (GitHub Actions):
 
 .env variables:
     META_ACCESS_TOKEN   — Long-lived Meta access token
-    META_AD_ACCOUNT_ID  — e.g. act_785368271166897
-    GMAIL_USER          — sender Gmail address (aversartur@gmail.com)
+    META_AD_ACCOUNT_ID  — e.g. act=4187967811416684
+    GMAIL_USER          — sender Gmail address
+    RECIPIENTS          — comma-separated list of recipient emails
+    TEST_RECIPIENT      — single recipient used in --test mode
     GMAIL_APP_PASSWORD  — Gmail app password (not your regular password)
 """
 
@@ -34,15 +36,8 @@ META_ACCESS_TOKEN  = os.getenv("META_ACCESS_TOKEN")
 META_AD_ACCOUNT_ID = os.getenv("META_AD_ACCOUNT_ID")
 GMAIL_USER         = os.getenv("GMAIL_USER")
 GMAIL_APP_PASSWORD = os.getenv("GMAIL_APP_PASSWORD")
-
-RECIPIENTS = [
-    "Kristin@fridaycollective.co",
-    "evgeny.nikulitsa@gmail.com",
-    "neagling@proxcapitalgroup.com",
-    "aversartur@gmail.com",
-]
-
-TEST_RECIPIENT = "jamaly777@gmail.com"
+RECIPIENTS         = [e.strip() for e in os.getenv("RECIPIENTS", "").split(",") if e.strip()]
+TEST_RECIPIENT     = os.getenv("TEST_RECIPIENT", "")
 
 
 # ── Date helpers ────────────────────────────────────────────────────────────────
@@ -110,6 +105,8 @@ def section_html(campaigns, totals, label, period_type):
             f'{roas_cell}'
             f'<td {td}>{c["clicks"]}</td>'
             f'<td {td}>{c["landing_page_views"]}</td>'
+            f'<td {td}>{c["registrations"]}</td>'
+            f'<td {td}>{c["schedule_events"]}</td>'
             f'<td {td}>{fmt_currency(c["cpm"])}</td>'
             f'<td {td}>{fmt_currency(c["cpc"])}</td>'
             f'<td {td}>{c["ctr"]:.2f}%</td>'
@@ -130,6 +127,8 @@ def section_html(campaigns, totals, label, period_type):
         f'color:{roas_color(roas_val)}">{roas_str}</td>'
         f'<td {td_tot}>{totals["clicks"]}</td>'
         f'<td {td_tot}>{totals["landing_page_views"]}</td>'
+        f'<td {td_tot}>{totals["registrations"]}</td>'
+        f'<td {td_tot}>{totals["schedule_events"]}</td>'
         f'<td {td_tot}>{fmt_currency(totals["cpm"])}</td>'
         f'<td {td_tot}>{fmt_currency(totals["cpc"])}</td>'
         f'<td {td_tot}>{totals["ctr"]:.2f}%</td>'
@@ -145,8 +144,8 @@ def section_html(campaigns, totals, label, period_type):
         + _summary_cell("ROAS", roas_str, roas_color(roas_val))
         + _summary_cell("Clicks", str(totals["clicks"]))
         + _summary_cell("LP Views", str(totals["landing_page_views"]))
-        + _summary_cell("Orders", str(totals["orders"]))
-        + _summary_cell("Order Value", fmt_currency(totals["order_value"]))
+        + _summary_cell("Registrations", str(totals["registrations"]))
+        + _summary_cell("Schedule", str(totals["schedule_events"]))
     )
     summary_row2 = (
         _summary_cell("CTR (link)", f"{totals['ctr']:.2f}%")
@@ -154,7 +153,7 @@ def section_html(campaigns, totals, label, period_type):
         + _summary_cell("CPM", fmt_currency(totals["cpm"]))
         + _summary_cell("Carts", str(totals["carts"]))
         + _summary_cell("Checkouts", str(totals["checkouts"]))
-        + '<td></td>'
+        + _summary_cell("Orders / Value", f"{totals['orders']} / {fmt_currency(totals['order_value'])}")
     )
 
     th_s = 'style="padding:8px 6px;text-align:right;background:#111;color:#fff"'
@@ -167,6 +166,8 @@ def section_html(campaigns, totals, label, period_type):
         f'<th {th_s}>ROAS</th>'
         f'<th {th_s}>Clicks</th>'
         f'<th {th_s}>LP Views</th>'
+        f'<th {th_s}>Registrations</th>'
+        f'<th {th_s}>Schedule</th>'
         f'<th {th_s}>CPM</th>'
         f'<th {th_s}>CPC</th>'
         f'<th {th_s}>CTR (link)</th>'
@@ -233,7 +234,7 @@ def build_html_email(report_date, sections):
               &#128202; Meta Ads Report
             </h1>
             <p style="margin:6px 0 0;color:#aaa;font-size:13px">
-              Generated on {report_date} &nbsp;&middot;&nbsp; Liquid Collagen Stix
+              Generated on {report_date} &nbsp;&middot;&nbsp; KingPin
             </p>
           </td>
         </tr>
@@ -246,7 +247,7 @@ def build_html_email(report_date, sections):
           <td style="background:#f8f8f8;padding:16px 32px;border-top:1px solid #eee">
             <p style="margin:0;font-size:12px;color:#aaa">
               Meta Ads API &nbsp;&middot;&nbsp; 08:00 UK time
-              &nbsp;&middot;&nbsp; Liquid Collagen Stix
+              &nbsp;&middot;&nbsp; KingPin
             </p>
           </td>
         </tr>
@@ -260,11 +261,11 @@ def build_html_email(report_date, sections):
 # ── Send email ──────────────────────────────────────────────────────────────────
 
 # Fixed subjects and thread anchors — daily and weekly each stay in own thread.
-DAILY_SUBJECT = "Meta Ads Daily Report \u2014 Liquid Collagen Stix"
-DAILY_THREAD_ID = "<meta-ads-daily-report@liquid-collagen-stix>"
+DAILY_SUBJECT = "Meta Ads Daily Report \u2014 KingPin"
+DAILY_THREAD_ID = "<meta-ads-daily-report@kingpin>"
 
-WEEKLY_SUBJECT = "Meta Ads Weekly Report \u2014 Liquid Collagen Stix"
-WEEKLY_THREAD_ID = "<meta-ads-weekly-report@liquid-collagen-stix>"
+WEEKLY_SUBJECT = "Meta Ads Weekly Report \u2014 KingPin"
+WEEKLY_THREAD_ID = "<meta-ads-weekly-report@kingpin>"
 
 
 def send_email(html_body, recipients, daily_mode=False):
@@ -289,10 +290,11 @@ def send_email(html_body, recipients, daily_mode=False):
 # ── Main ────────────────────────────────────────────────────────────────────────
 
 def main():
-    if not all([META_ACCESS_TOKEN, META_AD_ACCOUNT_ID, GMAIL_USER, GMAIL_APP_PASSWORD]):
+    if not all([META_ACCESS_TOKEN, META_AD_ACCOUNT_ID, GMAIL_USER, GMAIL_APP_PASSWORD,
+                RECIPIENTS, TEST_RECIPIENT]):
         raise EnvironmentError(
             "Missing env vars: META_ACCESS_TOKEN, META_AD_ACCOUNT_ID, "
-            "GMAIL_USER, GMAIL_APP_PASSWORD"
+            "GMAIL_USER, GMAIL_APP_PASSWORD, RECIPIENTS, TEST_RECIPIENT"
         )
 
     daily_mode = "--daily" in sys.argv
