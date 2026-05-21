@@ -78,9 +78,7 @@ def section_html(campaigns, totals, label, period_type):
     if campaigns is None:
         return "<p style='color:#888'>No spend data for this period.</p>"
 
-    roas_val  = totals["roas"]
-    dot_color = roas_color(roas_val)
-    roas_str  = f"{roas_val:.2f}x" if roas_val else "N/A"
+    dot_color = "#22c55e" if totals["leads"] > 0 else "#888888"
     icon      = "\U0001f4c5" if period_type == "daily" else "\U0001f4c6"
     heading   = "Daily Report \u2014 Yesterday" if period_type == "daily" else "Weekly Report"
 
@@ -91,18 +89,14 @@ def section_html(campaigns, totals, label, period_type):
     rows = ""
     for i, c in enumerate(campaigns, 1):
         bg = "#ffffff" if i % 2 == 1 else "#f9f9f9"
-        r = c["roas"]
-        roas_cell = (
-            f'<td {td} style="padding:8px 6px;text-align:right;'
-            f'color:{roas_color(r)};font-weight:700">'
-            f'{f"{r:.2f}x" if r else "N/A"}</td>'
-        )
         rows += (
             f'<tr style="background:{bg}">'
             f'<td {td_num}>{i}</td>'
             f'<td {td_name}>{c["name"]}</td>'
             f'<td {td}>{fmt_currency(c["spend"])}</td>'
-            f'{roas_cell}'
+            f'<td {td}>{c["leads"]}</td>'
+            f'<td {td}>{c["instant_form"]}</td>'
+            f'<td {td}>{fmt_currency(c["cpl"])}</td>'
             f'<td {td}>{c["clicks"]}</td>'
             f'<td {td}>{c["landing_page_views"]}</td>'
             f'<td {td}>{c["registrations"]}</td>'
@@ -110,10 +104,6 @@ def section_html(campaigns, totals, label, period_type):
             f'<td {td}>{fmt_currency(c["cpm"])}</td>'
             f'<td {td}>{fmt_currency(c["cpc"])}</td>'
             f'<td {td}>{c["ctr"]:.2f}%</td>'
-            f'<td {td}>{c["carts"]}</td>'
-            f'<td {td}>{c["checkouts"]}</td>'
-            f'<td {td}>{c["orders"]}</td>'
-            f'<td {td}>{fmt_currency(c["order_value"])}</td>'
             f'</tr>'
         )
 
@@ -123,8 +113,9 @@ def section_html(campaigns, totals, label, period_type):
         f'<td style="padding:8px 6px"></td>'
         f'<td style="padding:8px 6px">TOTAL</td>'
         f'<td {td_tot}>{fmt_currency(totals["spend"])}</td>'
-        f'<td style="padding:8px 6px;text-align:right;'
-        f'color:{roas_color(roas_val)}">{roas_str}</td>'
+        f'<td {td_tot}>{totals["leads"]}</td>'
+        f'<td {td_tot}>{totals["instant_form"]}</td>'
+        f'<td {td_tot}>{fmt_currency(totals["cpl"])}</td>'
         f'<td {td_tot}>{totals["clicks"]}</td>'
         f'<td {td_tot}>{totals["landing_page_views"]}</td>'
         f'<td {td_tot}>{totals["registrations"]}</td>'
@@ -132,28 +123,24 @@ def section_html(campaigns, totals, label, period_type):
         f'<td {td_tot}>{fmt_currency(totals["cpm"])}</td>'
         f'<td {td_tot}>{fmt_currency(totals["cpc"])}</td>'
         f'<td {td_tot}>{totals["ctr"]:.2f}%</td>'
-        f'<td {td_tot}>{totals["carts"]}</td>'
-        f'<td {td_tot}>{totals["checkouts"]}</td>'
-        f'<td {td_tot}>{totals["orders"]}</td>'
-        f'<td {td_tot}>{fmt_currency(totals["order_value"])}</td>'
         f'</tr>'
     )
 
     summary_row1 = (
         _summary_cell("Spend", fmt_currency(totals["spend"]))
-        + _summary_cell("ROAS", roas_str, roas_color(roas_val))
+        + _summary_cell("Leads", str(totals["leads"]))
+        + _summary_cell("FB Instant Form", str(totals["instant_form"]))
+        + _summary_cell("CPL", fmt_currency(totals["cpl"]))
         + _summary_cell("Clicks", str(totals["clicks"]))
         + _summary_cell("LP Views", str(totals["landing_page_views"]))
-        + _summary_cell("Registrations", str(totals["registrations"]))
-        + _summary_cell("Schedule", str(totals["schedule_events"]))
     )
     summary_row2 = (
         _summary_cell("CTR (link)", f"{totals['ctr']:.2f}%")
         + _summary_cell("CPC", fmt_currency(totals["cpc"]))
         + _summary_cell("CPM", fmt_currency(totals["cpm"]))
-        + _summary_cell("Carts", str(totals["carts"]))
-        + _summary_cell("Checkouts", str(totals["checkouts"]))
-        + _summary_cell("Orders / Value", f"{totals['orders']} / {fmt_currency(totals['order_value'])}")
+        + _summary_cell("Impressions", str(totals["impressions"]))
+        + _summary_cell("Registrations", str(totals["registrations"]))
+        + _summary_cell("Schedule", str(totals["schedule_events"]))
     )
 
     th_s = 'style="padding:8px 6px;text-align:right;background:#111;color:#fff"'
@@ -163,19 +150,17 @@ def section_html(campaigns, totals, label, period_type):
         f'color:#fff;border-radius:6px 0 0 0">#</th>'
         f'<th {th_l}>Campaign</th>'
         f'<th {th_s}>Spend</th>'
-        f'<th {th_s}>ROAS</th>'
+        f'<th {th_s}>Leads</th>'
+        f'<th {th_s}>FB Instant Form</th>'
+        f'<th {th_s}>CPL</th>'
         f'<th {th_s}>Clicks</th>'
         f'<th {th_s}>LP Views</th>'
         f'<th {th_s}>Registrations</th>'
         f'<th {th_s}>Schedule</th>'
         f'<th {th_s}>CPM</th>'
         f'<th {th_s}>CPC</th>'
-        f'<th {th_s}>CTR (link)</th>'
-        f'<th {th_s}>Carts</th>'
-        f'<th {th_s}>Checkouts</th>'
-        f'<th {th_s}>Orders</th>'
         f'<th style="padding:8px 6px;text-align:right;background:#111;'
-        f'color:#fff;border-radius:0 6px 0 0">Order Value</th>'
+        f'color:#fff;border-radius:0 6px 0 0">CTR (link)</th>'
     )
 
     return f"""

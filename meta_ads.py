@@ -45,6 +45,20 @@ def parse_action(items, action_type):
     return 0
 
 
+def parse_leads(items):
+    """Check all Facebook lead action types; Lead Forms use several keys."""
+    if not items:
+        return 0
+    lookup = {i.get("action_type"): float(i.get("value", 0)) for i in items}
+    for key in (
+        "omni_lead", "lead",
+        "leadgen_grouped", "onsite_conversion.lead_grouped",
+    ):
+        if key in lookup:
+            return int(round(lookup[key]))
+    return 0
+
+
 def parse_action_value(items, action_type):
     """Same deduplication logic for action_values."""
     if not items:
@@ -71,7 +85,7 @@ def fetch_meta_insights(since, until, access_token, ad_account_id):
         "access_token": access_token,
         "fields": (
             "campaign_name,spend,impressions,inline_link_clicks,"
-            "cpm,purchase_roas,actions,action_values"
+            "cpm,purchase_roas,actions"
         ),
         "time_range": json.dumps({"since": since, "until": until}),
         "level": "campaign",
@@ -93,11 +107,12 @@ def fetch_meta_insights(since, until, access_token, ad_account_id):
         impressions = int(row.get("impressions", 0))
         clicks = int(row.get("inline_link_clicks", 0))
         actions = row.get("actions", [])
-        action_vals = row.get("action_values", [])
 
         # Link CTR and link CPC — both derived from inline_link_clicks only
         link_ctr = (clicks / impressions * 100) if impressions > 0 else 0.0
         link_cpc = (spend / clicks) if clicks > 0 else 0.0
+
+        leads_count = parse_leads(actions)
 
         # CPM from API is correct (spend / impressions * 1000)
         campaigns.append({
@@ -112,10 +127,11 @@ def fetch_meta_insights(since, until, access_token, ad_account_id):
             "cpc": link_cpc,
             "ctr": link_ctr,
             "roas": parse_roas(row),
-            "carts": parse_action(actions, "add_to_cart"),
-            "checkouts": parse_action(actions, "initiate_checkout"),
-            "orders": parse_action(actions, "purchase"),
-            "order_value": parse_action_value(action_vals, "purchase"),
+            "leads": leads_count,
+            "instant_form": parse_action(
+                actions, "onsite_conversion.lead_grouped"
+            ),
+            "cpl": round(spend / leads_count, 2) if leads_count > 0 else None,
         })
 
     if not campaigns:
@@ -134,16 +150,7 @@ def fetch_meta_insights(since, until, access_token, ad_account_id):
     total_ctr = (total_clicks / total_impressions * 100) \
         if total_impressions else 0.0
 
-    ov_vals = [
-        c["order_value"] for c in campaigns if c["order_value"] is not None
-    ]
-
-    total_order_value = round(sum(ov_vals), 2) if ov_vals else None
-    roas_total = (
-        total_order_value / total_spend
-        if total_order_value and total_spend
-        else None
-    )
+    total_leads = sum(c["leads"] for c in campaigns)
 
     totals = {
         "spend": total_spend,
@@ -155,11 +162,12 @@ def fetch_meta_insights(since, until, access_token, ad_account_id):
         "cpm": total_cpm,
         "cpc": total_cpc,
         "ctr": total_ctr,
-        "roas": roas_total,
-        "carts": sum(c["carts"] for c in campaigns),
-        "checkouts": sum(c["checkouts"] for c in campaigns),
-        "orders": sum(c["orders"] for c in campaigns),
-        "order_value": total_order_value,
+        "roas": None,
+        "leads": total_leads,
+        "instant_form": sum(c["instant_form"] for c in campaigns),
+        "cpl": (
+            round(total_spend / total_leads, 2) if total_leads > 0 else None
+        ),
     }
 
     return campaigns, totals
